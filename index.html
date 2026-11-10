@@ -116,7 +116,7 @@
 </script>
 </head>
 <body>
-<!-- build: 2026-11-10d -->
+<!-- build: 2026-11-10e -->
 <canvas id="c"></canvas>
 <canvas id="fx"></canvas>
 
@@ -131,7 +131,7 @@
   </div>
   <div id="hint">おして！</div>
   <div id="callout"></div>
-  <div id="ver">v2026-11-10d</div>
+  <div id="ver">v2026-11-10e</div>
 </div>
 
 <div id="pad">
@@ -608,7 +608,11 @@ const VIEW = {
   orbitRate: 2.6,               // カメラが回りこむ速さ
   introLen: 2.6,                // さいしょに顔を見せる時間（秒）
   coastMin: 0.7, coastMax: 3.5, // ゴール後に惰性で飛ぶ時間
-  celebrateLen: 2.4             // よろこんでから結果を出すまで
+  celebrateLen: 2.4,            // よろこんでから結果を出すまで
+  celebDist: 8.6, celebUp: 1.2, // よろこぶときは少し引いて、体ぜんぶを見せる
+  vFast: 10,                    // 高くとんでいるときの追いかけ（これまでと同じ）
+  vSmooth: 2.5,                 // カメラの上下の追いかけ（小さいほど、地面でのはねで揺れない）
+  vWindow: 3                    // これ以上はなれたら（大きく上り下りしたら）遅れずについていく
 };
 
 const $ = id => document.getElementById(id);
@@ -816,7 +820,12 @@ function makePlayer() {
   for (const sx of [1, -1]) { const m = new THREE.Mesh(w, eyeB); m.position.set(0.035 * sx, 0.685, 0.615); m.rotation.z = Math.PI; face.smile.add(m); }
   g.add(face.smile);
   // よろこぶ：小さく開いた口
-  face.mouth = add(ball(0.07), red, 0, 0.655, 0.6, 1.1, 0.8, 0.4);
+  face.mouth = new THREE.Group(); face.mouth.position.set(0, 0.675, 0.628);
+  const mouthDisc = new THREE.Mesh(new THREE.CircleGeometry(0.1, 24, Math.PI, Math.PI), new THREE.MeshBasicMaterial({ color: 0x8a2238 }));
+  face.mouth.add(mouthDisc);
+  const tongue = new THREE.Mesh(new THREE.CircleGeometry(0.05, 20, Math.PI, Math.PI), new THREE.MeshBasicMaterial({ color: 0xff8fa5 }));
+  tongue.position.set(0, -0.045, 0.002); tongue.scale.set(1.1, 0.8, 1); face.mouth.add(tongue);
+  g.add(face.mouth);
   g.userData.face = face;
   return g;
 }
@@ -842,7 +851,7 @@ let phaseT = 0, landedInCoast = false, resultShown = false;
 let running = false, paused = false;
 let camYaw = 0, threadGrow = 0, missT = 0, fov = VIEW.fovBase, target = null;
 let camOrbit = Math.PI, camDist = VIEW.faceDist, camUpNow = VIEW.faceUp, lookBlend = 1;
-let confetti = null, lookOff = 0.8;
+let confetti = null, lookOff = 0.8, camPY = 0;
 const G = { frames: 0, elapsed: 0 };
 const apiInput = { held: false, steer: 0 };
 const webPointers = new Set(), steerPointers = new Map();
@@ -977,7 +986,7 @@ function buildWorld(index) {
   camYaw = S.heading; threadGrow = 0; missT = 0; target = null; G.elapsed = 0;
   // さいしょは顔が見える位置（キャラの前）にカメラを置く
   phase = 'intro'; phaseT = 0; landedInCoast = false; resultShown = false;
-  camOrbit = Math.PI; camDist = VIEW.faceDist; camUpNow = VIEW.faceUp; lookBlend = 1;
+  camOrbit = Math.PI; camDist = VIEW.faceDist; camUpNow = VIEW.faceUp; lookBlend = 1; camPY = S.p.y;
   setFace('normal'); player.position.set(S.p.x, S.p.y, S.p.z);
   $('callout').style.display = 'none';
   $('prog').style.display = S.mode === 'straight' ? 'block' : 'none';
@@ -1167,12 +1176,20 @@ function updateVisuals(dt, snap) {
   const front = showFace;
   const k = snap ? 1 : 1 - Math.exp(-VIEW.orbitRate * dt);
   camOrbit += ((front ? Math.PI : 0) - camOrbit) * k;
-  camDist += ((front ? VIEW.faceDist : VIEW.camBack) - camDist) * k;
-  camUpNow += ((front ? VIEW.faceUp : VIEW.camUp) - camUpNow) * k;
+  const ending = phase === 'celebrate' || screen === 'result';
+  camDist += ((ending ? VIEW.celebDist : front ? VIEW.faceDist : VIEW.camBack) - camDist) * k;
+  camUpNow += ((ending ? VIEW.celebUp : front ? VIEW.faceUp : VIEW.camUp) - camUpNow) * k;
+  // カメラの高さは、プレイヤーの上下（地面でのぴょんぴょん）にそのままついていかず、ゆっくり追う
+  // 地面ちかく（高さ4m以下）ではゆっくり、空高くに上がったら（10mで）これまでどおり素早くついていく
+  const hi = Math.max(0, Math.min(1, (p.y - 4) / 6));
+  const vRate = front ? 8 : VIEW.vSmooth + (VIEW.vFast - VIEW.vSmooth) * hi;
+  const kv = snap ? 1 : 1 - Math.exp(-vRate * dt);
+  camPY += (p.y - camPY) * kv;
+  camPY = Math.max(p.y - VIEW.vWindow, Math.min(p.y + VIEW.vWindow, camPY));
   lookBlend += ((front ? 1 : 0) - lookBlend) * k;
   const yaw = camYaw + camOrbit;
   const fxn = Math.sin(camYaw), fzn = Math.cos(camYaw);
-  let cx = p.x - Math.sin(yaw) * camDist, cy = Math.max(2.2, p.y + camUpNow), cz = p.z - Math.cos(yaw) * camDist;
+  let cx = p.x - Math.sin(yaw) * camDist, cy = Math.max(2.2, camPY + camUpNow), cz = p.z - Math.cos(yaw) * camDist;
   if (S.mode === 'free') {
     // カメラがビルにめりこむときは、キャラに近づける
     let k = 1;
@@ -1184,15 +1201,15 @@ function updateVisuals(dt, snap) {
   camera.position.y += (cy - camera.position.y) * a;
   camera.position.z += (cz - camera.position.z) * a;
   // 顔を見せるときの視線の高さ（よろこぶ間は「やったー！」と重ならないようキャラを少し下に）
-  const wantOff = screen === 'result' ? 0.1 : phase === 'celebrate' ? 1.9 : 0.8;
+  const wantOff = screen === 'result' ? -0.5 : phase === 'celebrate' ? 0.9 : 0.8;
   lookOff += (wantOff - lookOff) * (snap ? 1 : 1 - Math.exp(-3 * dt));
   const lb = lookBlend;
   camera.lookAt(
     p.x + fxn * VIEW.lookAhead * (1 - lb),
-    p.y + VIEW.lookUp * (1 - lb) + lookOff * lb + jump * 0.5 * lb,
+    camPY + VIEW.lookUp * (1 - lb) + (p.y - camPY) * lb + lookOff * lb + jump * 0.5 * lb,
     p.z + fzn * VIEW.lookAhead * (1 - lb));
   const wantFov = front ? 50 : Math.min(VIEW.fovMax, VIEW.fovBase + spd * VIEW.fovPerSpeed);
-  fov += (wantFov - fov) * Math.min(1, dt * 4 + (snap ? 1 : 0));
+  fov += (wantFov - fov) * Math.min(1, dt * 2.5 + (snap ? 1 : 0));
   if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = fov; camera.updateProjectionMatrix(); }
 
   // 風の音
