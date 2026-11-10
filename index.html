@@ -53,7 +53,7 @@
   }
   @keyframes pulse { to { transform: translateX(-50%) scale(1.12); } }
   #callout {
-    left: 50%; top: 24%; transform: translateX(-50%); font-weight: 700; font-size: clamp(34px, 7vw, 60px); color: #1c2733;
+    left: 50%; top: 14%; transform: translateX(-50%); font-weight: 700; font-size: clamp(30px, 6vw, 52px); color: #1c2733;
     background: #fff; border: 4px solid #1c2733; border-radius: 28px; padding: 6px 30px; display: none; white-space: nowrap;
   }
   #callout.pop { animation: cpop .4s; }
@@ -116,7 +116,7 @@
 </script>
 </head>
 <body>
-<!-- build: 2026-11-10b -->
+<!-- build: 2026-11-10c -->
 <canvas id="c"></canvas>
 <canvas id="fx"></canvas>
 
@@ -131,7 +131,7 @@
   </div>
   <div id="hint">おして！</div>
   <div id="callout"></div>
-  <div id="ver">v2026-11-10b</div>
+  <div id="ver">v2026-11-10c</div>
 </div>
 
 <div id="pad">
@@ -784,7 +784,7 @@ function makePlayer() {
   sph(0.72, white, 0, -0.1, 0, 1, 1.05, 0.95);
   sph(0.6, white, 0, 0.85, 0.05);
   sph(0.2, black, 0.42, 1.36, 0); sph(0.2, black, -0.42, 1.36, 0);
-  sph(0.15, black, 0.22, 0.92, 0.52, 1, 1.25, 0.5); sph(0.15, black, -0.22, 0.92, 0.52, 1, 1.25, 0.5);
+  for (const sx of [1, -1]) { const pm = sph(0.13, black, 0.21 * sx, 0.9, 0.535, 1.2, 0.9, 0.5); pm.rotation.z = -0.45 * sx; }
   sph(0.07, black, 0, 0.74, 0.62);
   sph(0.27, black, 0.33, -0.78, 0.05, 1, 0.8, 1.2); sph(0.27, black, -0.33, -0.78, 0.05, 1, 0.8, 1.2);
   const armGeo = new THREE.CapsuleGeometry(0.17, 0.6, 4, 8); armGeo.translate(0, 0.42, 0);
@@ -800,15 +800,19 @@ function makePlayer() {
   const ball = r => new THREE.SphereGeometry(r, 12, 10);
   face.open = [];
   for (const sx of [1, -1]) {
-    face.open.push(add(ball(0.08), eyeW, 0.22 * sx, 0.95, 0.6));
-    face.open.push(add(ball(0.05), eyeB, 0.22 * sx, 0.95, 0.66));
-    face.open.push(add(ball(0.018), eyeW, 0.205 * sx, 0.975, 0.705));
-    add(ball(0.1), pink, 0.38 * sx, 0.78, 0.48, 1, 0.7, 0.4);
+    face.open.push(add(ball(0.042), eyeW, 0.195 * sx, 0.925, 0.612));
+    face.open.push(add(ball(0.018), eyeW, 0.232 * sx, 0.885, 0.605));
+    add(ball(0.11), pink, 0.37 * sx, 0.76, 0.49, 1, 0.65, 0.35);
   }
-  const arc = new THREE.TorusGeometry(0.075, 0.024, 6, 14, Math.PI);
-  face.happy = [add(arc, eyeW, 0.22, 0.92, 0.63), add(arc, eyeW, -0.22, 0.92, 0.63)];
-  face.smile = add(new THREE.TorusGeometry(0.085, 0.02, 6, 14, Math.PI), eyeB, 0, 0.67, 0.6, 1, 1, 1, Math.PI);
-  face.mouth = add(ball(0.13), red, 0, 0.63, 0.57, 1, 0.75, 0.45);
+  const arc = new THREE.TorusGeometry(0.05, 0.018, 6, 14, Math.PI);
+  face.happy = [add(arc, eyeW, 0.205, 0.895, 0.615), add(arc, eyeW, -0.205, 0.895, 0.615)];
+  // ふだん：ω（ネコ口ふう）の小さな口
+  const w = new THREE.TorusGeometry(0.035, 0.012, 6, 12, Math.PI);
+  face.smile = new THREE.Group();
+  for (const sx of [1, -1]) { const m = new THREE.Mesh(w, eyeB); m.position.set(0.035 * sx, 0.685, 0.615); m.rotation.z = Math.PI; face.smile.add(m); }
+  g.add(face.smile);
+  // よろこぶ：小さく開いた口
+  face.mouth = add(ball(0.07), red, 0, 0.655, 0.6, 1.1, 0.8, 0.4);
   g.userData.face = face;
   return g;
 }
@@ -834,7 +838,7 @@ let phaseT = 0, landedInCoast = false, resultShown = false;
 let running = false, paused = false;
 let camYaw = 0, threadGrow = 0, missT = 0, fov = VIEW.fovBase, target = null;
 let camOrbit = Math.PI, camDist = VIEW.faceDist, camUpNow = VIEW.faceUp, lookBlend = 1;
-let confetti = null;
+let confetti = null, lookOff = 0.8;
 const G = { frames: 0, elapsed: 0 };
 const apiInput = { held: false, steer: 0 };
 const webPointers = new Set(), steerPointers = new Map();
@@ -1175,10 +1179,13 @@ function updateVisuals(dt, snap) {
   camera.position.x += (cx - camera.position.x) * a;
   camera.position.y += (cy - camera.position.y) * a;
   camera.position.z += (cz - camera.position.z) * a;
+  // 顔を見せるときの視線の高さ（よろこぶ間は「やったー！」と重ならないようキャラを少し下に）
+  const wantOff = screen === 'result' ? 0.1 : phase === 'celebrate' ? 1.9 : 0.8;
+  lookOff += (wantOff - lookOff) * (snap ? 1 : 1 - Math.exp(-3 * dt));
   const lb = lookBlend;
   camera.lookAt(
     p.x + fxn * VIEW.lookAhead * (1 - lb),
-    p.y + VIEW.lookUp * (1 - lb) + (screen === 'result' ? 0.1 : 0.8) * lb + jump * 0.5 * lb,
+    p.y + VIEW.lookUp * (1 - lb) + lookOff * lb + jump * 0.5 * lb,
     p.z + fzn * VIEW.lookAhead * (1 - lb));
   const wantFov = front ? 50 : Math.min(VIEW.fovMax, VIEW.fovBase + spd * VIEW.fovPerSpeed);
   fov += (wantFov - fov) * Math.min(1, dt * 4 + (snap ? 1 : 0));
